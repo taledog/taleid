@@ -103,3 +103,4 @@ cd tools/zoo && docker-compose up -d
 - tokenserver
 - upid
 - zkUid
+- tinyid
