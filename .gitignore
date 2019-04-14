@@ -1,0 +1,13 @@
+docker/build/*
+docker/dist/*
+logs/*
+*.pem
+.idea
+*.tmp
+*.test
+*.sqlite
+*.tar
+# redis dump
+dump.rdb
+tools/zoo/*
+vendor
