@@ -1,16 +1,15 @@
 package handle
 
 import (
+	"fmt"
+	"runtime"
 	"sync"
 
-	"strings"
-
 	"context"
-	"os"
+	"strings"
 	"time"
 
-	klog "github.com/go-kit/kit/log"
-
+	"github.com/sirupsen/logrus"
 	"github.com/tidwall/redcon"
 
 	"github.com/taledog/taleid/cmd/idHttp/conf"
@@ -21,12 +20,13 @@ import (
 type Handler struct {
 	svc    service.Service
 	db     store.Store
-	logger klog.Logger
+	logger *logrus.Entry
 }
 
 const (
-	slowTime = 10 * time.Millisecond
-	defautDB = "_NO_APP_"
+	slowTime      = 20 * time.Millisecond
+	cancelTimeout = 500 * time.Millisecond
+	defautDB      = "_NO_APP_"
 )
 
 var (
@@ -35,26 +35,90 @@ var (
 )
 
 func (p *Handler) Serve(conn redcon.Conn, cmd redcon.Command) {
-	defer func(begin time.Time) {
+	name := strings.ToLower(string(cmd.Args[0]))
+	defer func(begin time.Time, name string) {
 		if time.Since(begin) > slowTime {
-			p.logger.Log("slow", time.Since(begin), "duration", time.Since(begin))
+			p.logger.WithFields(
+				logrus.Fields{
+					"slow":     time.Since(begin),
+					"duration": time.Since(begin),
+				})
 		}
-	}(time.Now())
-	switch strings.ToLower(string(cmd.Args[0])) {
+		if r := recover(); r != nil {
+			var err error
+			switch r := r.(type) {
+			case error:
+				err = r
+			default:
+				err = fmt.Errorf("%v", r)
+			}
+			stack := make([]byte, 4<<10) // 4 KB
+			length := runtime.Stack(stack, true)
+			p.logger.Errorf("[PANIC RECOVER] %s: %s %s\n", name, err, stack[:length])
+			conn.WriteError("[PANIC RECOVER]" + name)
+		}
+	}(time.Now(), name)
+	switch name {
 	default:
-		conn.WriteError("ERR unknown command '" + string(cmd.Args[0]) + "'")
-	case "hincrby":
-		p.HINCRBY(conn, cmd)
-	case "incr":
-		p.INCR(conn, cmd)
-	case "max":
-		p.Max(conn, cmd)
-	case "get":
-		p.Last(conn, cmd)
-	case "len":
-		p.Remainder(conn, cmd)
+		var (
+			db    string
+			table string
+			id    int64
+			msg   string
+		)
+		switch len(cmd.Args) {
+		default:
+			conn.WriteError("ERR wrong number of arguments for '" + name + "' command.")
+			return
+		case 2:
+			names := strings.SplitN(string(cmd.Args[1]), ":", 2)
+			if len(names) > 1 {
+				db, table = names[0], names[1]
+			} else {
+				db, table = defautDB, names[0]
+			}
+		case 3:
+			db = string(cmd.Args[1])
+			table = string(cmd.Args[2])
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+		defer cancel()
+		switch name {
+		default:
+			conn.WriteError("ERR unknown command '" + name + "'")
+			return
+		case "get", "incr", "next":
+			id, msg = p.svc.Next(ctx, db, table)
+		case "max":
+			id, msg = p.svc.Max(ctx, db, table)
+		case "last":
+			id, msg = p.svc.Last(ctx, db, table)
+		case "remainder":
+			id, msg = p.svc.Remainder(ctx, db, table)
+		}
+		if msg != "" {
+			conn.WriteError(msg)
+			return
+		}
+		conn.WriteInt64(id)
+	case "check":
+		ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+		defer cancel()
+		err := p.db.Ping(ctx)
+		if err != nil {
+			conn.WriteError(err.Error())
+		}
+		conn.WriteString("OK")
+
 	case "ping":
-		p.Ping(conn, cmd)
+		conn.WriteString("PONG")
+	case "help":
+		conn.WriteString(`usage: [cmd] DB TABLE
+		next
+		last
+		max
+		remainder
+	`)
 	case "quit":
 		conn.WriteString("OK")
 		conn.Close()
@@ -62,99 +126,10 @@ func (p *Handler) Serve(conn redcon.Conn, cmd redcon.Command) {
 		p.ShutDown()
 	}
 }
+func (p *Handler) usage(conn redcon.Conn, name string) {
+	conn.WriteError("ERR wrong number of arguments for '" + name + "' command.")
 
-func (p *Handler) HINCRBY(conn redcon.Conn, cmd redcon.Command) {
-	if len(cmd.Args) < 3 {
-		conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-		return
-	}
-	db := string(cmd.Args[1])
-	table := string(cmd.Args[2])
-	id, msg := p.svc.Next(context.TODO(), db, table)
-	if msg != "" {
-		conn.WriteError(msg)
-		return
-	}
-	conn.WriteInt64(id)
 }
-
-func (p *Handler) INCR(conn redcon.Conn, cmd redcon.Command) {
-	var db, table string
-	switch len(cmd.Args) {
-	default:
-		conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-		return
-	case 2:
-		names := strings.SplitN(string(cmd.Args[1]), ":", 2)
-		if len(names) == 2 {
-			db = names[0]
-			table = names[1]
-		} else {
-			db = defautDB
-			table = names[0]
-		}
-	case 3:
-		db = string(cmd.Args[1])
-		table = string(cmd.Args[2])
-	}
-	id, msg := p.svc.Next(context.TODO(), db, table)
-	if msg != "" {
-		conn.WriteError(msg)
-		return
-	}
-	conn.WriteInt64(id)
-}
-
-func (p *Handler) Remainder(conn redcon.Conn, cmd redcon.Command) {
-	if len(cmd.Args) != 2 {
-		conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-		return
-	}
-	name := string(cmd.Args[1])
-	id, msg := p.svc.Remainder(context.TODO(), name)
-	if msg != "" {
-		conn.WriteError(msg)
-		return
-	}
-	conn.WriteInt64(id)
-}
-
-func (p *Handler) Last(conn redcon.Conn, cmd redcon.Command) {
-	if len(cmd.Args) != 2 {
-		conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-		return
-	}
-	name := string(cmd.Args[1])
-	id, msg := p.svc.Last(context.TODO(), name)
-	if msg != "" {
-		conn.WriteError(msg)
-		return
-	}
-	conn.WriteInt64(id)
-}
-
-func (p *Handler) Max(conn redcon.Conn, cmd redcon.Command) {
-	if len(cmd.Args) != 2 {
-		conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-		return
-	}
-	name := string(cmd.Args[1])
-	id, msg := p.svc.Max(context.TODO(), name)
-	if msg != "" {
-		conn.WriteError(msg)
-		return
-	}
-	conn.WriteInt64(id)
-}
-
-func (p *Handler) Ping(conn redcon.Conn, cmd redcon.Command) {
-	err := p.db.Ping(context.TODO())
-	if err != nil {
-		conn.WriteError(err.Error())
-	}
-	conn.WriteString("PONG")
-}
-
 func (p *Handler) Connected(conn redcon.Conn) bool {
 	mu.Lock()
 	conns[conn] = true
@@ -177,10 +152,7 @@ func (p *Handler) ShutDown() {
 }
 
 func NewRedisHandler(config conf.Config) *Handler {
-	var logger klog.Logger
-	logger = klog.NewLogfmtLogger(klog.NewSyncWriter(os.Stderr))
-	logger = klog.With(logger, "ts", klog.DefaultTimestampUTC)
-
+	logger := config.Logger.WithField("app", "redis")
 	db := store.NewStore(config.Store.Type, config.Store.URI, config.Generate.DataCenter, logger)
 	svc := service.New(logger, db, config.Generate.Step, config.Generate.DataCenter, config.Store.Min, config.Store.Max)
 	return &Handler{svc: svc, db: db, logger: logger}

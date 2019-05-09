@@ -13,8 +13,10 @@ redis:
 wrk:
 	wrk -c 10 -t 2 -d 5 http://127.0.0.1:7000/next -s tools/wrk.lua
 test:
+	docker-compose up -d
 	go test github.com/taledog/taleid/generator -bench . -benchmem
 	go test github.com/taledog/taleid/store
 	go test github.com/taledog/taleid/cmd/idHttp/service -bench . -benchmem
+	docker-compose down
 build:
 	docker build -t ${GO_IMAGES} .

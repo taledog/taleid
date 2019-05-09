@@ -1,12 +1,12 @@
 FROM golang:1.12-alpine
-MAINTAINER luwei <luw2007@gmail.com>
+MAINTAINER luwei <taledog@gmail.com>
 
 ENV GOROOT /usr/local/go
 ENV GOPATH /go
 ENV PATH $PATH:$GOROOT/bin
 ENV GO111MODULE on
 
-RUN mkdir -p /taleid /taleid/etc /taleid/logs && apk add git
+RUN mkdir -p /taleid /taleid/etc /taleid/logs
 WORKDIR /taleid
 
 ADD . /go/src/github.com/taledog/taleid

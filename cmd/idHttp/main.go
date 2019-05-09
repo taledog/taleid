@@ -2,29 +2,78 @@ package main
 
 import (
 	"fmt"
-	netHttp "net/http"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
-	klog "github.com/go-kit/kit/log"
+	"github.com/gin-gonic/gin"
+
 	"github.com/taledog/taleid/cmd/idHttp/conf"
-	"github.com/taledog/taleid/cmd/idHttp/endpoints"
-	"github.com/taledog/taleid/cmd/idHttp/http"
 	"github.com/taledog/taleid/cmd/idHttp/service"
 	"github.com/taledog/taleid/store"
 )
 
+type Request struct {
+	APP string `json:"app"`
+	DB  string `json:"db"`
+}
+
+type Response struct {
+	Code int64  `json:"code,omitempty"`
+	ID   int64  `json:"id"`
+	Msg  string `json:"msg,omitempty"`
+}
+
 func main() {
+	g := gin.Default()
 	config := conf.Init()
-	var logger klog.Logger
-	logger = klog.NewLogfmtLogger(klog.NewSyncWriter(os.Stderr))
-	logger = klog.With(logger, "ts", klog.DefaultTimestampUTC)
+	logger := config.Logger.WithField("svc", "idhttp")
 
 	db := store.NewStore(config.Store.Type, config.Store.URI, config.Generate.DataCenter, logger)
 	svc := service.New(logger, db, config.Generate.Step, config.Generate.DataCenter, config.Store.Min, config.Store.Max)
-	e := endpoints.New(svc, logger)
-	h := http.NewHTTPHandler(e)
+
+	g.GET("/last", func(c *gin.Context) {
+		app := c.Query("app")
+		db := c.Query("db")
+		if app == "" || db == "" {
+			c.JSON(200, `{"code":-1,"id":0,"msg":"argument error"}`)
+			return
+		}
+		id, msg := svc.Last(c, app, db)
+		c.JSON(200, Response{ID: id, Msg: msg})
+	})
+	g.GET("/max", func(c *gin.Context) {
+		app := c.Query("app")
+		db := c.Query("db")
+		if app == "" || db == "" {
+			c.JSON(200, `{"code":-1,"id":0,"msg":"argument error"}`)
+			return
+		}
+		id, msg := svc.Max(c, app, db)
+		c.JSON(200, Response{ID: id, Msg: msg})
+	})
+	g.GET("/remainder", func(c *gin.Context) {
+		app := c.Query("app")
+		db := c.Query("db")
+		if app == "" || db == "" {
+			c.JSON(200, `{"code":-1,"id":0,"msg":"argument error"}`)
+			return
+		}
+		id, msg := svc.Remainder(c, app, db)
+		//c.String(200, fmt.Sprintf("{"))
+		c.JSON(200, Response{ID: id, Msg: msg})
+	})
+	g.POST("/next", func(c *gin.Context) {
+		app := c.PostForm("app")
+		db := c.PostForm("db")
+		if app == "" || db == "" {
+			c.JSON(200, Response{Code: -1, Msg: "argument error"})
+			return
+		}
+		id, msg := svc.Next(c, app, db)
+		c.JSON(200, Response{ID: id, Msg: msg})
+	})
 
 	errs := make(chan error)
 	go func() {
@@ -34,9 +83,9 @@ func main() {
 	}()
 
 	go func() {
-		logger.Log("transport", "HTTP", "addr", config.Server.Address)
-		errs <- netHttp.ListenAndServe(config.Server.Address, h)
+		logger.Info("transport", "HTTP", "addr", config.Server.Address)
+		errs <- http.ListenAndServe(config.Server.Address, g)
 	}()
 
-	logger.Log("exit", <-errs)
+	logger.Info("exit", <-errs)
 }

@@ -12,6 +12,18 @@ cd taleid
 go run cmd/idRedis/main.go
 ```
 
+quick start
+---
+```
+# 启动依赖存储
+docker-compose up -d
+# 运行http协议客户端
+go run cmd/idHttp/main.go
+# 查询id
+curl 'http://127.0.0.1:7000/next' -d 'app=ugc&db=topic'
+# 得到 {"id":1}
+```
+
 redis store
 ---
 ```shell
@@ -25,7 +37,7 @@ zk store
 ```shell
 zkCli
 create /taleid/0 'master data center'
-create /taleid 'tale id root'
+create /taleid 'rabbit id root'
 cd tools/zoo && docker-compose up -d
 ```
 
@@ -40,10 +52,21 @@ zk需要基础目录 /taleid/{机房ID}/{项目}
 ```shell
 zkCli
 create /taleid/0 'master data center'
-create /taleid 'tale id root'
+create /taleid 'rabbit id root'
 
 cd tools/zoo && docker-compose up -d
 ```
+
+idHttp
+---
+- /next
+    获取下一个id `curl 'http://127.0.0.1:7000/next' -d 'app=ugc&db=topic'`
+- /last
+    最后一个id `curl 'http://127.0.0.1:7000/last?app=ugc&db=topic'`
+- /max
+    最大的id `curl 'http://127.0.0.1:7000/max?app=ugc&db=topic'`
+- /remainder
+    剩余数量 `curl 'http://127.0.0.1:7000/remainder?app=ugc&db=topic'`
 
 文档
 ---
@@ -103,4 +126,3 @@ cd tools/zoo && docker-compose up -d
 - tokenserver
 - upid
 - zkUid
-- tinyid

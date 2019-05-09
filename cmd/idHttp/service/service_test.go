@@ -6,9 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"bytes"
-
-	klog "github.com/go-kit/kit/log"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,8 +14,6 @@ const (
 	testDB   = "comment"
 	testSize = 5
 )
-
-var logger klog.Logger
 
 type MockStore struct {
 	id *int64
@@ -48,8 +44,7 @@ func TestService_Next(t *testing.T) {
 		id: new(int64),
 		mu: new(sync.Mutex),
 	}
-	buf := &bytes.Buffer{}
-	logger = klog.NewLogfmtLogger(buf)
+	logger := logrus.NewEntry(logrus.New())
 	svc := New(logger, db, testSize, 0, 60, 600)
 	id, errMsg := svc.Next(context.TODO(), testDB, "next")
 	assert.Equal(t, errMsg, "")
@@ -63,18 +58,17 @@ func TestService_Last(t *testing.T) {
 		id: new(int64),
 		mu: new(sync.Mutex),
 	}
-	buf := &bytes.Buffer{}
-	logger = klog.NewLogfmtLogger(buf)
+	logger := logrus.NewEntry(logrus.New())
 	svc := New(logger, db, testSize, 0, 60, 600)
 
 	// 没加载报错
-	testName := fmt.Sprintf("%s|last", testDB)
-	last, err := svc.Last(context.TODO(), testName)
+	table := "last"
+	last, err := svc.Last(context.TODO(), testDB, table)
 	assert.Equal(t, err, ErrEmpty.Error())
 
-	id, err := svc.Next(context.TODO(), testDB, "last")
+	id, err := svc.Next(context.TODO(), testDB, table)
 	assert.Equal(t, err, "")
-	last, err = svc.Last(context.TODO(), testName)
+	last, err = svc.Last(context.TODO(), testDB, table)
 	assert.Equal(t, err, "")
 	assert.Equal(t, id, last)
 }
@@ -84,17 +78,16 @@ func TestService_Remainder(t *testing.T) {
 		id: new(int64),
 		mu: new(sync.Mutex),
 	}
-	buf := &bytes.Buffer{}
-	logger = klog.NewLogfmtLogger(buf)
+	logger := logrus.NewEntry(logrus.New())
 	svc := New(logger, db, testSize, 0, 60, 600)
 
 	// 没加载报错
-	testName := fmt.Sprintf("%s|remainder", testDB)
-	remainder, err := svc.Remainder(context.TODO(), testName)
+	testTable := "remainder"
+	remainder, err := svc.Remainder(context.TODO(), testDB, testTable)
 	assert.Equal(t, err, ErrEmpty.Error())
 
-	svc.Next(context.TODO(), testDB, "remainder")
-	remainder, err = svc.Remainder(context.TODO(), testName)
+	svc.Next(context.TODO(), testDB, testTable)
+	remainder, err = svc.Remainder(context.TODO(), testDB, testTable)
 	assert.Equal(t, err, "")
 	assert.Equal(t, remainder, int64(testSize-1))
 }
@@ -104,8 +97,7 @@ func BenchmarkService_Next(b *testing.B) {
 		id: new(int64),
 		mu: new(sync.Mutex),
 	}
-	buf := &bytes.Buffer{}
-	logger = klog.NewLogfmtLogger(buf)
+	logger := logrus.NewEntry(logrus.New())
 	svc := New(logger, db, 1000, 0, 60, 600)
 	ctx := context.TODO()
 	for i := 0; i < b.N; i++ {
